@@ -895,23 +895,23 @@
         // ★ BLE書き込みキュー直列化（Keypad送信とGPS送信の衝突防止）
         let bleWriteQueue = Promise.resolve();
         function bleSend(cmd) {
-            bleWriteQueue = bleWriteQueue
-                .then(() => rxChar.writeValue(new TextEncoder().encode(cmd)))
-                .catch(e => log("BLE write fail: " + cmd.substring(0,10) + "... " + e));
-            return bleWriteQueue;
+            const writePromise = bleWriteQueue.then(() => rxChar.writeValue(new TextEncoder().encode(cmd)));
+            bleWriteQueue = writePromise.catch(() => {}); // キュー自体は失敗しても継続させる
+            return writePromise; // 呼び出し元には成否をそのまま伝える
         }
 
         // ★ GPS to CAN (ADU-5 / ECUMASTER GPStoCAN互換フォーマット)
         let gpsWatchId = null;
         let lastGpsSend = 0;
         let lastGpsFix = {};
+        let gpsFixCount = 0;
         const GPS_SEND_THROTTLE = 200; // ms
         function updateGpsStatusDisplay(fix, sent) {
             const el = document.getElementById('gps-status-display');
             if (!el) return;
             el.style.display = 'block';
             if (!fix) { el.textContent = 'GPS:--'; el.style.color = '#888'; return; }
-            el.textContent = (sent ? 'GPS:TX' : 'GPS:RX') + fix.accuracy.toFixed(0) + 'm';
+            el.textContent = (sent ? 'GPS:TX' : 'GPS:RX') + fix.accuracy.toFixed(0) + 'm(' + gpsFixCount + ')';
             el.style.color = sent ? '#00ff00' : '#ffcc00';
             const panel = document.getElementById('gps-detail-panel');
             if (panel && panel.style.display !== 'none') {
@@ -922,6 +922,7 @@
                     'hdg: ' + (fix.heading||0).toFixed(1) + ' deg<br>' +
                     'alt: ' + (fix.altitude||0).toFixed(1) + ' m<br>' +
                     'acc: ' + fix.accuracy.toFixed(0) + ' m<br>' +
+                    'fix count: ' + gpsFixCount + '<br>' +
                     'last TX: ' + (sent ? 'just now' : (lastGpsSend ? ((Date.now()-lastGpsSend)/1000).toFixed(1)+'s ago' : 'never'));
             }
         }
@@ -932,18 +933,21 @@
             updateGpsStatusDisplay(lastGpsFix, false);
         }
         function startGpsWatch() {
-            if (gpsWatchId !== null || !navigator.geolocation) return;
+            log("startGpsWatch() called, geolocation=" + (!!navigator.geolocation));
+            if (gpsWatchId !== null || !navigator.geolocation) { log("GPS watch skipped (already running or unsupported)"); return; }
             gpsWatchId = navigator.geolocation.watchPosition(pos => {
-                if (!rxChar) return;
+                gpsFixCount++;
+                if (!rxChar) { log("GPS fix #" + gpsFixCount + " but rxChar missing"); return; }
                 lastGpsFix = pos.coords;
                 const now = Date.now();
                 if (now - lastGpsSend < GPS_SEND_THROTTLE) { updateGpsStatusDisplay(pos.coords, false); return; }
                 lastGpsSend = now;
                 const { latitude, longitude, speed, heading, altitude, accuracy } = pos.coords;
                 const cmd = `GPS=${latitude.toFixed(7)},${longitude.toFixed(7)},${(speed||0).toFixed(2)},${(heading||0).toFixed(1)},${(altitude||0).toFixed(1)},${(accuracy||999).toFixed(0)}`;
-                bleSend(cmd);
-                updateGpsStatusDisplay(pos.coords, true);
+                bleSend(cmd).then(() => updateGpsStatusDisplay(pos.coords, true))
+                            .catch(e => { log("GPS send fail: " + e); updateGpsStatusDisplay(pos.coords, false); });
             }, err => { log("GPS err: " + err.message); const el = document.getElementById('gps-status-display'); if (el) { el.style.display='block'; el.textContent='GPS: ERR'; el.style.color='#ff0000'; } }, { enableHighAccuracy: true, maximumAge: 0 });
+            log("GPS watch registered, id=" + gpsWatchId);
         }
         function stopGpsWatch() {
             if (gpsWatchId !== null) { navigator.geolocation.clearWatch(gpsWatchId); gpsWatchId = null; }
