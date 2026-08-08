@@ -257,6 +257,7 @@
             <div class="status-group">
                 <div id="status-display" class="status-indicator">🔴 Disconnected</div>
                 <div id="can-status-display" class="status-indicator" style="display:none; font-size:0.8rem; border-left:1px solid #444; padding-left:10px;">CAN: --</div>
+                <div id="gps-status-display" class="status-indicator" style="display:none; font-size:0.75rem; border-left:1px solid #444; padding-left:10px; color:#888;" onclick="toggleGpsDetail()">GPS: --</div>
             </div>
             <div style="flex:1;"></div>
             <div style="display:flex; gap:15px; align-items:center;">
@@ -271,6 +272,7 @@
             <div style="margin-top:20px; color:#666; font-size:0.8rem;">Ver 4.0 (Group ID)</div>
         </div>
         <div id="sync-overlay">⚙️ Syncing...</div>
+        <div id="gps-detail-panel" style="display:none; position:absolute; top:60px; left:10px; right:10px; background:#1a1a1a; border:1px solid #0f0; border-radius:8px; padding:10px; font-size:0.75rem; color:#0f0; font-family:monospace; z-index:50;"></div>
         <div id="keypad"></div>
     </div>
     <div id="view-settings" class="view-container">
@@ -902,21 +904,51 @@
         // ★ GPS to CAN (ADU-5 / ECUMASTER GPStoCAN互換フォーマット)
         let gpsWatchId = null;
         let lastGpsSend = 0;
+        let lastGpsFix = {};
         const GPS_SEND_THROTTLE = 200; // ms
+        function updateGpsStatusDisplay(fix, sent) {
+            const el = document.getElementById('gps-status-display');
+            if (!el) return;
+            el.style.display = 'block';
+            if (!fix) { el.textContent = 'GPS: --'; el.style.color = '#888'; return; }
+            el.textContent = sent ? ('GPS: TX ' + fix.accuracy.toFixed(0) + 'm') : ('GPS: RX ' + fix.accuracy.toFixed(0) + 'm');
+            el.style.color = sent ? '#00ff00' : '#ffcc00';
+            const panel = document.getElementById('gps-detail-panel');
+            if (panel && panel.style.display !== 'none') {
+                panel.innerHTML =
+                    'lat: ' + fix.latitude.toFixed(7) + '<br>' +
+                    'lon: ' + fix.longitude.toFixed(7) + '<br>' +
+                    'spd: ' + ((fix.speed||0)*3.6).toFixed(1) + ' km/h<br>' +
+                    'hdg: ' + (fix.heading||0).toFixed(1) + ' deg<br>' +
+                    'alt: ' + (fix.altitude||0).toFixed(1) + ' m<br>' +
+                    'acc: ' + fix.accuracy.toFixed(0) + ' m<br>' +
+                    'last TX: ' + (sent ? 'just now' : (lastGpsSend ? ((Date.now()-lastGpsSend)/1000).toFixed(1)+'s ago' : 'never'));
+            }
+        }
+        function toggleGpsDetail() {
+            const panel = document.getElementById('gps-detail-panel');
+            if (!panel) return;
+            panel.style.display = (panel.style.display === 'none') ? 'block' : 'none';
+            updateGpsStatusDisplay(lastGpsFix, false);
+        }
         function startGpsWatch() {
             if (gpsWatchId !== null || !navigator.geolocation) return;
             gpsWatchId = navigator.geolocation.watchPosition(pos => {
                 if (!rxChar) return;
+                lastGpsFix = pos.coords;
                 const now = Date.now();
-                if (now - lastGpsSend < GPS_SEND_THROTTLE) return;
+                if (now - lastGpsSend < GPS_SEND_THROTTLE) { updateGpsStatusDisplay(pos.coords, false); return; }
                 lastGpsSend = now;
                 const { latitude, longitude, speed, heading, altitude, accuracy } = pos.coords;
                 const cmd = `GPS=${latitude.toFixed(7)},${longitude.toFixed(7)},${(speed||0).toFixed(2)},${(heading||0).toFixed(1)},${(altitude||0).toFixed(1)},${(accuracy||999).toFixed(0)}`;
                 bleSend(cmd);
-            }, err => log("GPS err: " + err.message), { enableHighAccuracy: true, maximumAge: 0 });
+                updateGpsStatusDisplay(pos.coords, true);
+            }, err => { log("GPS err: " + err.message); const el = document.getElementById('gps-status-display'); if (el) { el.style.display='block'; el.textContent='GPS: ERR'; el.style.color='#ff0000'; } }, { enableHighAccuracy: true, maximumAge: 0 });
         }
         function stopGpsWatch() {
             if (gpsWatchId !== null) { navigator.geolocation.clearWatch(gpsWatchId); gpsWatchId = null; }
+            const el = document.getElementById('gps-status-display'); if (el) el.style.display = 'none';
+            const panel = document.getElementById('gps-detail-panel'); if (panel) panel.style.display = 'none';
         }
 
         async function connect() {
