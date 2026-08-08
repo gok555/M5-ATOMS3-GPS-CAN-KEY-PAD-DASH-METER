@@ -31,7 +31,7 @@
             display: flex; justify-content: space-between; align-items: center;
             margin-bottom: 5px; padding: 0 5px; flex-shrink: 0; height: 40px;
         }
-        .status-group { display: flex; align-items: center; gap: 10px; }
+        .status-group { display: flex; align-items: center; gap: 10px; min-width: 0; overflow: hidden; flex-shrink: 1; }
         .status-indicator { font-size: 0.9rem; color: #888; font-weight: bold; }
         .status-indicator.can-ok { color: #28a745; }
         .status-indicator.can-err { color: #dc3545; }
@@ -300,6 +300,13 @@
                 </div>
             </div>
             <div class="control-row" style="margin-top:5px;">
+                <div class="id-input-group">
+                    <label style="min-width: 60px;">GID:0x</label>
+                    <input type="text" id="gps-base-id-input" value="400" maxlength="3">
+                    <button id="set-gps-id-btn" class="action-btn btn-orange" onclick="setGpsBaseId()">SET</button>
+                </div>
+            </div>
+            <div class="control-row" style="margin-top:5px;">
                 <div style="display:flex; gap:5px;">
                     <div class="id-input-group" style="flex:0.4; padding:2px;">
                         <input type="color" id="temp-color-input" value="#00FFFF" style="width:100%; height:35px; border:none; padding:0; background:none; cursor:pointer;">
@@ -565,10 +572,12 @@
         const WATCHDOG_TIMEOUT = 3500;
         let canIdVal = localStorage.getItem("canIdVal") || "100";
         let kMeterIdVal = localStorage.getItem("kMeterIdVal") || "200";
+        let gpsBaseIdVal = localStorage.getItem("gpsBaseIdVal") || "400";
 
         document.addEventListener("DOMContentLoaded", () => {
             const cInput = document.getElementById("can-id-input"); if (cInput) cInput.value = canIdVal;
             const kInput = document.getElementById("k-meter-id-input"); if (kInput) kInput.value = kMeterIdVal;
+            const gInput = document.getElementById("gps-base-id-input"); if (gInput) gInput.value = gpsBaseIdVal;
             // ★ グループID初期化
             const g1 = document.getElementById("grp1-id-input"); if (g1) { g1.value = grp1IdVal; updateGrpDec('grp1'); }
             const g2 = document.getElementById("grp2-id-input"); if (g2) { g2.value = grp2IdVal; updateGrpDec('grp2'); }
@@ -911,7 +920,7 @@
             if (!el) return;
             el.style.display = 'block';
             if (!fix) { el.textContent = 'GPS:--'; el.style.color = '#888'; return; }
-            el.textContent = (sent ? 'GPS:TX' : 'GPS:RX') + fix.accuracy.toFixed(0) + 'm(' + gpsFixCount + ')';
+            el.textContent = (sent ? 'GPS:TX' : 'GPS:RX') + fix.accuracy.toFixed(0) + 'm';
             el.style.color = sent ? '#00ff00' : '#ffcc00';
             const panel = document.getElementById('gps-detail-panel');
             if (panel && panel.style.display !== 'none') {
@@ -1033,6 +1042,7 @@
             
             if (cleanedCmd.startsWith("ID=")) { const val = cleanedCmd.split("=")[1].replace("0x", "").replace("0X", "").toUpperCase(); log("Sync ID: " + val); canIdVal = val; localStorage.setItem("canIdVal", canIdVal); const el = document.getElementById("can-id-input"); if (el) el.value = canIdVal; }
             else if (cleanedCmd.startsWith("KID=")) { const val = cleanedCmd.split("=")[1].replace("0x", "").replace("0X", "").toUpperCase(); log("Sync KID: " + val); kMeterIdVal = val; localStorage.setItem("kMeterIdVal", kMeterIdVal); const el = document.getElementById("k-meter-id-input"); if (el) el.value = kMeterIdVal; }
+            else if (cleanedCmd.startsWith("GID=")) { const val = cleanedCmd.split("=")[1].replace("0x", "").replace("0X", "").toUpperCase(); log("Sync GID: " + val); gpsBaseIdVal = val; localStorage.setItem("gpsBaseIdVal", gpsBaseIdVal); const el = document.getElementById("gps-base-id-input"); if (el) el.value = gpsBaseIdVal; }
             // ★ グループID確認受信
             else if (cleanedCmd.startsWith("GRP1=")) {
                 const val = cleanedCmd.split("=")[1].replace("0x","").replace("0X","").toUpperCase();
@@ -1168,6 +1178,13 @@
                 if (rxChar) { const cmd = `KID=${val}`; bleSend(cmd).catch(e => log("TX ERR KID")); } 
             } else { alert("Invalid Hex ID"); } 
         }
+        function setGpsBaseId() { 
+            const el = document.getElementById("gps-base-id-input"); const val = el.value; 
+            if (val.match(/^[0-9A-Fa-f]+$/)) { 
+                log(`Set GPS Base ID: 0x${val}`); localStorage.setItem("gpsBaseIdVal", val); gpsBaseIdVal = val; 
+                if (rxChar) { const cmd = `GID=${val}`; bleSend(cmd).catch(e => log("TX ERR GID")); } 
+            } else { alert("Invalid Hex ID"); } 
+        }
 
         // ★ グループID設定 (v4.0)
         function updateGrpDec(grp) {
@@ -1211,7 +1228,7 @@
         }
         function exportConfig() {
             const _pin = localStorage.getItem('pinCode') || '';
-            const config = { version: "4.0.0", timestamp: new Date().toISOString(), btnLabels, btnModes, btnColors, btnOnVals, btnOffVals, btnEndian, btnIcons, btnAuth, btnOnDelays, btnOffDelays, cfgVibe, cfgSound, canId: canIdVal, kMeterId: kMeterIdVal, tempWarnVal, tempColor, rxConfigs, grp1Id: grp1IdVal, grp2Id: grp2IdVal,
+            const config = { version: "4.0.0", timestamp: new Date().toISOString(), btnLabels, btnModes, btnColors, btnOnVals, btnOffVals, btnEndian, btnIcons, btnAuth, btnOnDelays, btnOffDelays, cfgVibe, cfgSound, canId: canIdVal, kMeterId: kMeterIdVal, gpsBaseId: gpsBaseIdVal, tempWarnVal, tempColor, rxConfigs, grp1Id: grp1IdVal, grp2Id: grp2IdVal,
                 pinCode: _pin };
             const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(config, null, 2)); const downloadAnchor = document.createElement('a'); downloadAnchor.setAttribute("href", dataStr); downloadAnchor.setAttribute("download", "m5_can_config_v3_8.json"); document.body.appendChild(downloadAnchor); downloadAnchor.click(); downloadAnchor.remove(); log("Config Exported");
         }
@@ -1237,6 +1254,7 @@
                     if (config.cfgSound !== undefined) { cfgSound = config.cfgSound; localStorage.setItem("cfgSound", JSON.stringify(cfgSound)); }
                     if (config.canId) { document.getElementById("can-id-input").value = config.canId; canIdVal = config.canId; localStorage.setItem("canIdVal", canIdVal); }
                     if (config.kMeterId) { document.getElementById("k-meter-id-input").value = config.kMeterId; kMeterIdVal = config.kMeterId; localStorage.setItem("kMeterIdVal", kMeterIdVal); }
+                    if (config.gpsBaseId) { document.getElementById("gps-base-id-input").value = config.gpsBaseId; gpsBaseIdVal = config.gpsBaseId; localStorage.setItem("gpsBaseIdVal", gpsBaseIdVal); }
                     if (config.tempWarnVal) { tempWarnVal = config.tempWarnVal; localStorage.setItem("tempWarnVal", tempWarnVal); document.getElementById("temp-alarm-input").value = tempWarnVal; }
                     if (config.tempColor) { tempColor = config.tempColor; localStorage.setItem("tempColor", tempColor); document.getElementById("temp-color-input").value = tempColor; }
                     if (config.btnOnDelays) { btnOnDelays = config.btnOnDelays; localStorage.setItem("btnOnDelays", JSON.stringify(btnOnDelays)); }
