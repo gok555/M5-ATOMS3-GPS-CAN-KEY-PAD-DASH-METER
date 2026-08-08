@@ -1,4 +1,3 @@
-
 # ==========================================
 # ATOM S3 + ATOM CAN Base
 # Ver 8.1 - PIN Authentication + BUS Status
@@ -50,6 +49,7 @@ CAN_GROUP_1_ID = 0x4E0
 CAN_GROUP_2_ID = 0x4E1
 can_tx_id    = 0x5A0
 k_meter_id   = 0x661
+gps_base_id  = 0x400
 slot_modes   = [1] * 7
 can_state    = bytearray(8)
 
@@ -79,7 +79,6 @@ _pending_config_send = False
 ble_rx_queue  = []
 
 # ★ GPS to CAN (ADU-5 / ECUMASTER GPStoCAN互換フォーマット)
-GPS_BASE_ID    = 0x400
 GPS_SEND_INT   = 300
 gps_lat = gps_lon = gps_spd = gps_hdg = gps_alt = 0.0
 gps_acc        = 999
@@ -102,6 +101,8 @@ class BLEUART:
     def __init__(self, ble):
         self._ble = ble
         self._ble.active(True)
+        try: self._ble.config(mtu=256)  # ★ デフォルト23byteだとGPSコマンドが切り詰められるため拡張
+        except: pass
         self._ble.irq(self._irq)
         ((self._tx, self._rx),) = self._ble.gatts_register_services([
             (UART_UUID, ((UART_TX, bluetooth.FLAG_NOTIFY),
@@ -238,6 +239,7 @@ def queue_config_sync():
     ble_tx_queue.append(f"GRP2={hex(CAN_GROUP_2_ID)}".encode())
     ble_tx_queue.append(f"ID={hex(can_tx_id)}".encode())
     ble_tx_queue.append(f"KID={hex(k_meter_id)}".encode())
+    ble_tx_queue.append(f"GID={hex(gps_base_id)}".encode())
 
 def extract_val(data, pos, mode):
     if len(data) <= pos: return None
@@ -258,22 +260,23 @@ def safe_can_send(id, data):
 def send_gps_can():
     lat_raw = int(gps_lat * 10000000)
     lon_raw = int(gps_lon * 10000000)
-    safe_can_send(GPS_BASE_ID, struct.pack('>ii', lat_raw, lon_raw))
+    safe_can_send(gps_base_id, struct.pack('>ii', lat_raw, lon_raw))
 
     spd_raw = int(gps_spd * 3.6 * 1000 / 36)
     alt_raw = int(gps_alt)
     status = 4 if gps_acc < 30 else 1
     byte7 = (status & 0x07) | ((4 & 0x07) << 3)
-    safe_can_send(GPS_BASE_ID + 1, struct.pack('>hhBBBB', spd_raw, alt_raw, 0, 0, 0, byte7))
+    safe_can_send(gps_base_id + 1, struct.pack('>hhBBBB', spd_raw, alt_raw, 0, 0, 0, byte7))
 
     hdg_raw = int(gps_hdg)
-    safe_can_send(GPS_BASE_ID + 2, struct.pack('>HHhh', hdg_raw, hdg_raw, 0, 0))
+    safe_can_send(gps_base_id + 2, struct.pack('>HHhh', hdg_raw, hdg_raw, 0, 0))
 
-    safe_can_send(GPS_BASE_ID + 3, struct.pack('>hhhh', 0, 0, 0, 0))
+    safe_can_send(gps_base_id + 3, struct.pack('>hhhh', 0, 0, 0, 0))
 
 def process_ble_cmd():
     global CAN_GROUP_1_ID, CAN_GROUP_2_ID, can_tx_id, k_meter_id
     global gps_lat, gps_lon, gps_spd, gps_hdg, gps_alt, gps_acc, last_gps_update
+    global gps_base_id
     if not ble_rx_queue: return
     cmd = ble_rx_queue.pop(0)
     try:
@@ -372,6 +375,10 @@ def process_ble_cmd():
             k_meter_id = int(cmd.split('=')[1], 16)
             if nvs: nvs.set_i32("k_meter_id", k_meter_id); nvs.commit()
             ble_tx_queue.append(f"KID={hex(k_meter_id)}".encode())
+        elif cmd.startswith("GID="):
+            gps_base_id = int(cmd.split('=')[1], 16)
+            if nvs: nvs.set_i32("gps_base_id", gps_base_id); nvs.commit()
+            ble_tx_queue.append(f"GID={hex(gps_base_id)}".encode())
         elif cmd == "CLEAR_PIN":
             # PIN削除(リセット)
             _clear_pin()
@@ -379,9 +386,17 @@ def process_ble_cmd():
                 pin_verified.discard(h)
             ble_tx_queue.append(b"PIN_CLEARED")
 
-        elif cmd.startswith("GPS="):
-            p = cmd.split('=')[1].split(',')
-            gps_lat, gps_lon, gps_spd, gps_hdg, gps_alt, gps_acc = map(float, p)
+        elif cmd.startswith("A="):
+            gps_lat = float(cmd[2:])
+            last_gps_update = time.ticks_ms()
+
+        elif cmd.startswith("O="):
+            gps_lon = float(cmd[2:])
+            last_gps_update = time.ticks_ms()
+
+        elif cmd.startswith("P="):
+            p = cmd[2:].split(',')
+            gps_spd, gps_hdg, gps_alt, gps_acc = map(float, p)
             last_gps_update = time.ticks_ms()
 
         elif '=' in cmd:
@@ -446,6 +461,10 @@ try:
     CAN_GROUP_2_ID = nvs.get_i32("grp2_id")
     can_tx_id      = nvs.get_i32("my_id")
     k_meter_id     = nvs.get_i32("k_meter_id")
+except: pass
+try:
+    _v = nvs.get_i32("gps_base_id")
+    if _v is not None: gps_base_id = _v
 except: pass
 try:
     for i in range(7): slot_modes[i] = nvs.get_i32(f"slot{i}_mode")
