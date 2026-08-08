@@ -257,11 +257,11 @@
             <div class="status-group">
                 <div id="status-display" class="status-indicator">🔴 Disconnected</div>
                 <div id="can-status-display" class="status-indicator" style="display:none; font-size:0.8rem; border-left:1px solid #444; padding-left:10px;">CAN: --</div>
-                <div id="gps-status-display" class="status-indicator" style="display:none; font-size:0.75rem; border-left:1px solid #444; padding-left:10px; color:#888; white-space:nowrap;" onclick="toggleGpsDetail()">GPS:--</div>
             </div>
             <div style="flex:1;"></div>
             <div style="display:flex; gap:15px; align-items:center; flex-shrink:0;">
                 <button id="meter-view-btn" class="header-btn" onclick="showMeter()">📟</button>
+                <button id="gps-status-display" class="header-btn" onclick="toggleGpsDetail()" style="display:none; font-size:1.2rem; color:#888;" title="GPS Status">📡</button>
                 <button id="main-sound-btn" class="header-btn" onclick="toggleSoundMain()" style="font-size:1.2rem;">🔊</button>
                 <button class="header-btn" onclick="toggleFullscreen()" title="Fullscreen">⛶</button>
                 <button id="settings-btn" class="header-btn" onclick="showSettings()">⚙️</button>
@@ -918,9 +918,8 @@
         function updateGpsStatusDisplay(fix, sent) {
             const el = document.getElementById('gps-status-display');
             if (!el) return;
-            el.style.display = 'block';
-            if (!fix) { el.textContent = 'GPS:--'; el.style.color = '#888'; return; }
-            el.textContent = (sent ? 'GPS:TX' : 'GPS:RX') + fix.accuracy.toFixed(0) + 'm';
+            el.style.display = 'inline-flex';
+            if (!fix) { el.style.color = '#888'; return; }
             el.style.color = sent ? '#00ff00' : '#ffcc00';
             const panel = document.getElementById('gps-detail-panel');
             if (panel && panel.style.display !== 'none') {
@@ -959,7 +958,7 @@
                 Promise.all([bleSend(cmdA), bleSend(cmdO), bleSend(cmdP)])
                     .then(() => updateGpsStatusDisplay(pos.coords, true))
                     .catch(e => { log("GPS send fail: " + e); updateGpsStatusDisplay(pos.coords, false); });
-            }, err => { log("GPS err: " + err.message); const el = document.getElementById('gps-status-display'); if (el) { el.style.display='block'; el.textContent='GPS: ERR'; el.style.color='#ff0000'; } }, { enableHighAccuracy: true, maximumAge: 0 });
+            }, err => { log("GPS err: " + err.message); const el = document.getElementById('gps-status-display'); if (el) { el.style.display='inline-flex'; el.style.color='#ff0000'; } }, { enableHighAccuracy: true, maximumAge: 0 });
             log("GPS watch registered, id=" + gpsWatchId);
         }
         function stopGpsWatch() {
