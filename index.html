@@ -943,9 +943,13 @@
                 if (now - lastGpsSend < GPS_SEND_THROTTLE) { updateGpsStatusDisplay(pos.coords, false); return; }
                 lastGpsSend = now;
                 const { latitude, longitude, speed, heading, altitude, accuracy } = pos.coords;
-                const cmd = `GPS=${latitude.toFixed(7)},${longitude.toFixed(7)},${(speed||0).toFixed(2)},${(heading||0).toFixed(1)},${(altitude||0).toFixed(1)},${(accuracy||999).toFixed(0)}`;
-                bleSend(cmd).then(() => updateGpsStatusDisplay(pos.coords, true))
-                            .catch(e => { log("GPS send fail: " + e); updateGpsStatusDisplay(pos.coords, false); });
+                // ★ BLE MTU(20byte)制限のため3分割で送信
+                const cmdA = `A=${latitude.toFixed(6)}`;
+                const cmdO = `O=${longitude.toFixed(6)}`;
+                const cmdP = `P=${(speed||0).toFixed(0)},${(heading||0).toFixed(0)},${(altitude||0).toFixed(0)},${(accuracy||999).toFixed(0)}`;
+                Promise.all([bleSend(cmdA), bleSend(cmdO), bleSend(cmdP)])
+                    .then(() => updateGpsStatusDisplay(pos.coords, true))
+                    .catch(e => { log("GPS send fail: " + e); updateGpsStatusDisplay(pos.coords, false); });
             }, err => { log("GPS err: " + err.message); const el = document.getElementById('gps-status-display'); if (el) { el.style.display='block'; el.textContent='GPS: ERR'; el.style.color='#ff0000'; } }, { enableHighAccuracy: true, maximumAge: 0 });
             log("GPS watch registered, id=" + gpsWatchId);
         }
