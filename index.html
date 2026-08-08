@@ -110,7 +110,7 @@
         .id-input-group label {
             padding-left: 5px; color: #ddd; font-size: 0.85rem; white-space: nowrap; min-width: 35px;
         }
-        #can-id-input, #k-meter-id-input, #temp-alarm-input {
+        #can-id-input, #k-meter-id-input, #gps-base-id-input, #temp-alarm-input {
             flex: 1; background: #222; border: 1px solid #555; color: white; padding: 12px;
             border-radius: 4px; text-align: center; font-family: monospace; font-size: 1.2rem; min-width: 80px;
         }
@@ -941,11 +941,10 @@
             updateGpsStatusDisplay(lastGpsFix, false);
         }
         function startGpsWatch() {
-            log("startGpsWatch() called, geolocation=" + (!!navigator.geolocation));
-            if (gpsWatchId !== null || !navigator.geolocation) { log("GPS watch skipped (already running or unsupported)"); return; }
+            if (gpsWatchId !== null || !navigator.geolocation) return;
             gpsWatchId = navigator.geolocation.watchPosition(pos => {
                 gpsFixCount++;
-                if (!rxChar) { log("GPS fix #" + gpsFixCount + " but rxChar missing"); return; }
+                if (!rxChar) return;
                 lastGpsFix = pos.coords;
                 const now = Date.now();
                 if (now - lastGpsSend < GPS_SEND_THROTTLE) { updateGpsStatusDisplay(pos.coords, false); return; }
@@ -959,7 +958,6 @@
                     .then(() => updateGpsStatusDisplay(pos.coords, true))
                     .catch(e => { log("GPS send fail: " + e); updateGpsStatusDisplay(pos.coords, false); });
             }, err => { log("GPS err: " + err.message); const el = document.getElementById('gps-status-display'); if (el) { el.style.display='inline-flex'; el.style.color='#ff0000'; } }, { enableHighAccuracy: true, maximumAge: 0 });
-            log("GPS watch registered, id=" + gpsWatchId);
         }
         function stopGpsWatch() {
             if (gpsWatchId !== null) { navigator.geolocation.clearWatch(gpsWatchId); gpsWatchId = null; }
