@@ -41,6 +41,7 @@ import bluetooth
 import struct
 from micropython import const
 from esp32 import NVS
+import ubinascii
 
 TX_PIN       = 6
 RX_PIN       = 5
@@ -82,8 +83,21 @@ ble_rx_queue  = []
 GPS_SEND_INT   = 300
 gps_lat = gps_lon = gps_spd = gps_hdg = gps_alt = 0.0
 gps_acc        = 999
+gps_utc_year = gps_utc_month = gps_utc_day = 0
+gps_utc_hour = gps_utc_min = gps_utc_sec = gps_utc_ms = 0
 last_gps_update = 0
 last_gps_send   = 0
+
+# ★ スマホ設定バックアップ(Base64チャンク転送、M5本体NVSへ保存)
+cfg_blob_buf = bytearray()
+
+# ★ CLOAD送信用ノンブロッキング状態機械
+cload_active    = False
+cload_data      = ""
+cload_pos       = 0
+cload_next_time = 0
+CLOAD_CHUNK     = 16
+CLOAD_INTERVAL  = 15  # ms
 
 # ★ PIN認証 (Ver 8.1)
 pin_code         = None     # 設定済みPIN (4桁文字列) or None
@@ -151,7 +165,7 @@ def _set_pin(new_pin):
             nvs.set_blob("pin_code", new_pin.encode())
             nvs.commit()
         except: pass
-    M5.Display.setCursor(0, 60)
+    M5.Display.setCursor(0, 72)
     M5.Display.setTextColor(0x07E0, 0x0000)  # 緑
     M5.Display.print("PIN:SET ")
     print("[PIN] Set:", new_pin)
@@ -164,7 +178,7 @@ def _clear_pin():
             nvs.set_blob("pin_code", b"")
             nvs.commit()
         except: pass
-    M5.Display.fillRect(0, 60, 128, 20, 0x0000)
+    M5.Display.fillRect(0, 72, 128, 24, 0x0000)
     print("[PIN] Cleared")
 
 def _load_pin():
@@ -273,9 +287,17 @@ def send_gps_can():
 
     safe_can_send(gps_base_id + 3, struct.pack('>hhhh', 0, 0, 0, 0))
 
+    ms_raw = int(gps_utc_ms * 65536 / 1000)
+    safe_can_send(gps_base_id + 4, struct.pack('>BBBBBBH',
+        gps_utc_year, gps_utc_month, gps_utc_day,
+        gps_utc_hour, gps_utc_min, gps_utc_sec, ms_raw))
+
 def process_ble_cmd():
     global CAN_GROUP_1_ID, CAN_GROUP_2_ID, can_tx_id, k_meter_id
     global gps_lat, gps_lon, gps_spd, gps_hdg, gps_alt, gps_acc, last_gps_update
+    global gps_utc_year, gps_utc_month, gps_utc_day, gps_utc_hour, gps_utc_min, gps_utc_sec, gps_utc_ms
+    global cfg_blob_buf
+    global cload_active, cload_data, cload_pos, cload_next_time
     global gps_base_id
     if not ble_rx_queue: return
     cmd = ble_rx_queue.pop(0)
@@ -398,6 +420,53 @@ def process_ble_cmd():
             p = cmd[2:].split(',')
             gps_spd, gps_hdg, gps_alt, gps_acc = map(float, p)
             last_gps_update = time.ticks_ms()
+
+        elif cmd.startswith("T="):
+            # T=YYMMDDHHMMSSmmm (固定幅、UTC)
+            s = cmd[2:]
+            gps_utc_year  = int(s[0:2])
+            gps_utc_month = int(s[2:4])
+            gps_utc_day   = int(s[4:6])
+            gps_utc_hour  = int(s[6:8])
+            gps_utc_min   = int(s[8:10])
+            gps_utc_sec   = int(s[10:12])
+            gps_utc_ms    = int(s[12:15])
+
+        elif cmd.startswith("CBSTART="):
+            cfg_blob_buf = bytearray()
+
+        elif cmd.startswith("CB="):
+            try:
+                cfg_blob_buf += ubinascii.a2b_base64(cmd[3:])
+            except: pass
+
+        elif cmd == "CBEND":
+            if nvs:
+                try:
+                    nvs.set_blob("phone_cfg", bytes(cfg_blob_buf))
+                    nvs.set_i32("phone_cfg_len", len(cfg_blob_buf))
+                    nvs.commit()
+                    ble_tx_queue.append(b"CBOK")
+                except Exception as e:
+                    print("[CFG SAVE ERR]", e)
+                    ble_tx_queue.append(("CBERR=" + str(e)[:14]).encode())
+            else:
+                ble_tx_queue.append(b"CBERR=no_nvs")
+            cfg_blob_buf = bytearray()
+
+        elif cmd == "CLOAD":
+            try:
+                blen = nvs.get_i32("phone_cfg_len")
+                buf = bytearray(blen)
+                nvs.get_blob("phone_cfg", buf)
+                cload_data = ubinascii.b2a_base64(bytes(buf)).decode().strip()
+                cload_pos = 0
+                cload_active = True
+                cload_next_time = time.ticks_ms()
+                uart.send(f"CD={len(cload_data)}".encode())
+            except Exception as e:
+                print("[CFG LOAD ERR]", e)
+                ble_tx_queue.append(b"CLERR")
 
         elif '=' in cmd:
             p = cmd.split('=')
@@ -532,7 +601,8 @@ while True:
                                     (abs(t) >> 8) & 0xFF, abs(t) & 0xFF,
                                     0, 0, 0, 0])
                 safe_can_send(k_meter_id, s_data)
-                ble_tx_queue.append(f"TEMP={t}".encode())
+                if not cload_active:
+                    ble_tx_queue.append(f"TEMP={t}".encode())
             except: pass
         last_temp_send = now
 
@@ -544,15 +614,28 @@ while True:
         else:
             try: uart.send(item)
             except: pass
+    elif cload_active:
+        if time.ticks_diff(now, cload_next_time) >= CLOAD_INTERVAL:
+            if cload_pos < len(cload_data):
+                chunk = cload_data[cload_pos:cload_pos + CLOAD_CHUNK]
+                try: uart.send(("CK=" + chunk).encode())
+                except: pass
+                cload_pos += CLOAD_CHUNK
+                cload_next_time = now
+            else:
+                try: uart.send(b"CE")
+                except: pass
+                cload_active = False
     elif time.ticks_diff(now, last_vals_send) >= VALS_SEND_INT:
         send_vals_packet(uart)
         last_vals_send = now
 
     if time.ticks_diff(now, last_display) > DISP_INT:
         check_can_recovery()
-        if can_error: ble_tx_queue.append(b"STATUS=ERR")
-        elif not can_bus_active: ble_tx_queue.append(b"STATUS=NO_BUS")
-        else: ble_tx_queue.append(b"STATUS=CAN_OK")
+        if not cload_active:
+            if can_error: ble_tx_queue.append(b"STATUS=ERR")
+            elif not can_bus_active: ble_tx_queue.append(b"STATUS=NO_BUS")
+            else: ble_tx_queue.append(b"STATUS=CAN_OK")
         M5.Display.setCursor(0, 0)
         M5.Display.setTextColor(0xFFFF, 0x0000)
         # CAN BUSステータス
@@ -565,14 +648,14 @@ while True:
         else:
             M5.Display.setTextColor(0x8410, 0x0000)
             M5.Display.print("V8.1 BUS:-- ")
-        M5.Display.setCursor(0, 20)
+        M5.Display.setCursor(0, 24)
         M5.Display.setTextColor(0x07E0 if filter_ok else 0xF800, 0x0000)
         M5.Display.print("FLT:%s  " % ("HW" if filter_ok else "SW"))
-        M5.Display.setCursor(0, 40)
+        M5.Display.setCursor(0, 48)
         M5.Display.setTextColor(0xFFFF, 0x0000)
         M5.Display.print("T:%d Q:%d  " % (last_temp_val, len(ble_tx_queue)))
         # PINステータス
-        M5.Display.setCursor(0, 60)
+        M5.Display.setCursor(0, 72)
         if pin_code is None:
             M5.Display.setTextColor(0xF800, 0x0000)
             M5.Display.print("PIN:---  ")
