@@ -950,11 +950,14 @@
                 if (now - lastGpsSend < GPS_SEND_THROTTLE) { updateGpsStatusDisplay(pos.coords, false); return; }
                 lastGpsSend = now;
                 const { latitude, longitude, speed, heading, altitude, accuracy } = pos.coords;
-                // ★ BLE MTU(20byte)制限のため3分割で送信
+                // ★ BLE MTU(20byte)制限のため分割で送信
                 const cmdA = `A=${latitude.toFixed(6)}`;
                 const cmdO = `O=${longitude.toFixed(6)}`;
                 const cmdP = `P=${(speed||0).toFixed(0)},${(heading||0).toFixed(0)},${(altitude||0).toFixed(0)},${(accuracy||999).toFixed(0)}`;
-                Promise.all([bleSend(cmdA), bleSend(cmdO), bleSend(cmdP)])
+                const d = new Date(pos.timestamp);
+                const p2 = n => String(n).padStart(2, '0');
+                const cmdT = `T=${p2(d.getUTCFullYear()%100)}${p2(d.getUTCMonth()+1)}${p2(d.getUTCDate())}${p2(d.getUTCHours())}${p2(d.getUTCMinutes())}${p2(d.getUTCSeconds())}${String(d.getUTCMilliseconds()).padStart(3,'0')}`;
+                Promise.all([bleSend(cmdA), bleSend(cmdO), bleSend(cmdP), bleSend(cmdT)])
                     .then(() => updateGpsStatusDisplay(pos.coords, true))
                     .catch(e => { log("GPS send fail: " + e); updateGpsStatusDisplay(pos.coords, false); });
             }, err => { log("GPS err: " + err.message); const el = document.getElementById('gps-status-display'); if (el) { el.style.display='inline-flex'; el.style.color='#ff0000'; } }, { enableHighAccuracy: true, maximumAge: 0 });
