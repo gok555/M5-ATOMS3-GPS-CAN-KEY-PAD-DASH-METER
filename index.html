@@ -954,7 +954,7 @@
                 const cmdA = `A=${latitude.toFixed(6)}`;
                 const cmdO = `O=${longitude.toFixed(6)}`;
                 const cmdP = `P=${(speed||0).toFixed(0)},${(heading||0).toFixed(0)},${(altitude||0).toFixed(0)},${(accuracy||999).toFixed(0)}`;
-                const d = new Date(pos.timestamp);
+                const d = new Date(pos.timestamp + 9 * 3600 * 1000); // ★ JST補正(UTC+9)
                 const p2 = n => String(n).padStart(2, '0');
                 const cmdT = `T=${p2(d.getUTCFullYear()%100)}${p2(d.getUTCMonth()+1)}${p2(d.getUTCDate())}${p2(d.getUTCHours())}${p2(d.getUTCMinutes())}${p2(d.getUTCSeconds())}${String(d.getUTCMilliseconds()).padStart(3,'0')}`;
                 Promise.all([bleSend(cmdA), bleSend(cmdO), bleSend(cmdP), bleSend(cmdT)])
