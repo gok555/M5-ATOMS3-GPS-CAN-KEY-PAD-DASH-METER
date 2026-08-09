@@ -474,6 +474,13 @@
             </div>
             <div class="control-row" style="margin-top: 20px; border-top: 1px solid #444; padding-top: 10px;">
                 <div style="color: #ccc; font-size: 0.9rem; margin-bottom: 5px; text-align: center;">Config Backup</div>
+                <div style="display:flex; gap:10px; align-items:center; margin-bottom:8px; font-size:0.85rem;">
+                    <label style="color:#aaa;">保存先/読込元:</label>
+                    <select id="cfg-storage-target" style="flex:1; padding:6px;">
+                        <option value="phone">📱 スマホ(ファイル)</option>
+                        <option value="m5">🔧 M5本体</option>
+                    </select>
+                </div>
                 <div style="display:flex; gap:10px;">
                     <button class="action-btn btn-blue" onclick="exportConfig()" style="font-size:0.9rem;">⬇ Save Config</button>
                     <button class="action-btn btn-orange" onclick="importConfig()" style="font-size:0.9rem;">⬆ Load Config</button>
@@ -1043,6 +1050,12 @@
             if (cleanedCmd.startsWith("ID=")) { const val = cleanedCmd.split("=")[1].replace("0x", "").replace("0X", "").toUpperCase(); log("Sync ID: " + val); canIdVal = val; localStorage.setItem("canIdVal", canIdVal); const el = document.getElementById("can-id-input"); if (el) el.value = canIdVal; }
             else if (cleanedCmd.startsWith("KID=")) { const val = cleanedCmd.split("=")[1].replace("0x", "").replace("0X", "").toUpperCase(); log("Sync KID: " + val); kMeterIdVal = val; localStorage.setItem("kMeterIdVal", kMeterIdVal); const el = document.getElementById("k-meter-id-input"); if (el) el.value = kMeterIdVal; }
             else if (cleanedCmd.startsWith("GID=")) { const val = cleanedCmd.split("=")[1].replace("0x", "").replace("0X", "").toUpperCase(); log("Sync GID: " + val); gpsBaseIdVal = val; localStorage.setItem("gpsBaseIdVal", gpsBaseIdVal); const el = document.getElementById("gps-base-id-input"); if (el) el.value = gpsBaseIdVal; }
+            else if (cleanedCmd === "CBOK") { log("M5設定保存: OK確認"); }
+            else if (cleanedCmd === "CBERR") { log("M5設定保存: エラー"); }
+            else if (cleanedCmd.startsWith("CD=")) { _cfgLoadBuffer = ""; _cfgLoadExpected = parseInt(cleanedCmd.split("=")[1]); }
+            else if (cleanedCmd.startsWith("CK=")) { _cfgLoadBuffer += cleanedCmd.substring(3); }
+            else if (cleanedCmd === "CE") { if (_cfgLoadResolve) { _cfgLoadResolve(_cfgLoadBuffer); _cfgLoadResolve = null; } }
+            else if (cleanedCmd === "CLERR") { log("M5設定読込: データなし/エラー"); }
             // ★ グループID確認受信
             else if (cleanedCmd.startsWith("GRP1=")) {
                 const val = cleanedCmd.split("=")[1].replace("0x","").replace("0X","").toUpperCase();
@@ -1226,13 +1239,86 @@
                 if(st){ st.textContent="✅ Saved locally (Not Connected)"; st.style.color="#ffc107"; }
             }
         }
-        function exportConfig() {
+        function buildConfigObject() {
             const _pin = localStorage.getItem('pinCode') || '';
-            const config = { version: "4.0.0", timestamp: new Date().toISOString(), btnLabels, btnModes, btnColors, btnOnVals, btnOffVals, btnEndian, btnIcons, btnAuth, btnOnDelays, btnOffDelays, cfgVibe, cfgSound, canId: canIdVal, kMeterId: kMeterIdVal, gpsBaseId: gpsBaseIdVal, tempWarnVal, tempColor, rxConfigs, grp1Id: grp1IdVal, grp2Id: grp2IdVal,
+            return { version: "4.0.0", timestamp: new Date().toISOString(), btnLabels, btnModes, btnColors, btnOnVals, btnOffVals, btnEndian, btnIcons, btnAuth, btnOnDelays, btnOffDelays, cfgVibe, cfgSound, canId: canIdVal, kMeterId: kMeterIdVal, gpsBaseId: gpsBaseIdVal, tempWarnVal, tempColor, rxConfigs, grp1Id: grp1IdVal, grp2Id: grp2IdVal,
                 pinCode: _pin };
+        }
+        function applyConfigObject(config) {
+            if (config.btnLabels) { btnLabels = config.btnLabels; localStorage.setItem("btnLabels", JSON.stringify(btnLabels)); }
+            if (config.btnModes) { btnModes = config.btnModes; localStorage.setItem("btnModes", JSON.stringify(btnModes)); }
+            if (config.btnColors) { btnColors = config.btnColors; localStorage.setItem("btnColors", JSON.stringify(btnColors)); }
+            if (config.btnOnVals) { btnOnVals = config.btnOnVals; localStorage.setItem("btnOnVals", JSON.stringify(btnOnVals)); }
+            if (config.btnOffVals) { btnOffVals = config.btnOffVals; localStorage.setItem("btnOffVals", JSON.stringify(btnOffVals)); }
+            if (config.btnEndian) { btnEndian = config.btnEndian; localStorage.setItem("btnEndian", JSON.stringify(btnEndian)); }
+            if (config.btnIcons) { btnIcons = config.btnIcons; localStorage.setItem("btnIcons", JSON.stringify(btnIcons)); }
+            if (config.btnAuth) { btnAuth = config.btnAuth; localStorage.setItem("btnAuth", JSON.stringify(btnAuth)); }
+            if (config.cfgVibe !== undefined) { cfgVibe = config.cfgVibe; localStorage.setItem("cfgVibe", JSON.stringify(cfgVibe)); }
+            if (config.cfgSound !== undefined) { cfgSound = config.cfgSound; localStorage.setItem("cfgSound", JSON.stringify(cfgSound)); }
+            if (config.canId) { document.getElementById("can-id-input").value = config.canId; canIdVal = config.canId; localStorage.setItem("canIdVal", canIdVal); }
+            if (config.kMeterId) { document.getElementById("k-meter-id-input").value = config.kMeterId; kMeterIdVal = config.kMeterId; localStorage.setItem("kMeterIdVal", kMeterIdVal); }
+            if (config.gpsBaseId) { document.getElementById("gps-base-id-input").value = config.gpsBaseId; gpsBaseIdVal = config.gpsBaseId; localStorage.setItem("gpsBaseIdVal", gpsBaseIdVal); }
+            if (config.tempWarnVal) { tempWarnVal = config.tempWarnVal; localStorage.setItem("tempWarnVal", tempWarnVal); document.getElementById("temp-alarm-input").value = tempWarnVal; }
+            if (config.tempColor) { tempColor = config.tempColor; localStorage.setItem("tempColor", tempColor); document.getElementById("temp-color-input").value = tempColor; }
+            if (config.btnOnDelays) { btnOnDelays = config.btnOnDelays; localStorage.setItem("btnOnDelays", JSON.stringify(btnOnDelays)); }
+            if (config.btnOffDelays) { btnOffDelays = config.btnOffDelays; localStorage.setItem("btnOffDelays", JSON.stringify(btnOffDelays)); }
+            if (config.rxConfigs) { rxConfigs = config.rxConfigs; localStorage.setItem("rxConfigs", JSON.stringify(rxConfigs)); }
+            if (config.pinCode) { localStorage.setItem('pinCode', config.pinCode); log("PIN restored"); }
+            if (config.grp1Id) { grp1IdVal = config.grp1Id; localStorage.setItem("grp1IdVal", grp1IdVal); const el=document.getElementById("grp1-id-input"); if(el){el.value=grp1IdVal; updateGrpDec('grp1');} }
+            if (config.grp2Id) { grp2IdVal = config.grp2Id; localStorage.setItem("grp2IdVal", grp2IdVal); const el=document.getElementById("grp2-id-input"); if(el){el.value=grp2IdVal; updateGrpDec('grp2');} }
+            renderConfigList(); renderKeypadGrid(); loadRxSlotFromUI(); updateLabelsOnMeterView();
+        }
+
+        // ★ M5本体への設定保存/読込 (BLE経由、Base64チャンク転送)
+        const CFG_CHUNK_SIZE = 16;
+        function saveConfigToM5() {
+            if (!rxChar) { alert("M5未接続です"); return; }
+            const json = JSON.stringify(buildConfigObject());
+            const b64 = btoa(unescape(encodeURIComponent(json)));
+            log("M5へ設定保存開始 (" + b64.length + " chars)");
+            let chain = bleSend(`CBSTART=${b64.length}`);
+            for (let i = 0; i < b64.length; i += CFG_CHUNK_SIZE) {
+                const chunk = b64.substring(i, i + CFG_CHUNK_SIZE);
+                chain = chain.then(() => bleSend(`CB=${chunk}`));
+            }
+            chain.then(() => bleSend("CBEND"))
+                 .then(() => { log("M5へ設定保存完了"); alert("M5本体へ保存しました"); })
+                 .catch(e => { log("M5保存失敗: " + e); alert("M5への保存に失敗しました"); });
+        }
+        let _cfgLoadBuffer = "";
+        let _cfgLoadExpected = 0;
+        let _cfgLoadResolve = null;
+        function loadConfigFromM5() {
+            if (!rxChar) { alert("M5未接続です"); return; }
+            _cfgLoadBuffer = ""; _cfgLoadExpected = 0;
+            log("M5から設定読込開始");
+            const timeoutMs = 15000;
+            const p = new Promise((resolve, reject) => {
+                _cfgLoadResolve = resolve;
+                setTimeout(() => reject(new Error("timeout")), timeoutMs);
+            });
+            bleSend("CLOAD").catch(e => log("CLOAD送信失敗: " + e));
+            p.then(b64 => {
+                try {
+                    const json = decodeURIComponent(escape(atob(b64)));
+                    const config = JSON.parse(json);
+                    applyConfigObject(config);
+                    log("M5から設定読込完了"); alert("M5本体から読み込みました");
+                } catch (e) { log("M5設定パース失敗: " + e); alert("M5データの解析に失敗しました"); }
+            }).catch(e => { log("M5読込失敗: " + e); alert("M5からの読込に失敗しました(タイムアウトまたは保存データなし)"); });
+        }
+
+        function exportConfig() {
+            const target = document.getElementById("cfg-storage-target").value;
+            if (target === "m5") { saveConfigToM5(); return; }
+            const config = buildConfigObject();
             const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(config, null, 2)); const downloadAnchor = document.createElement('a'); downloadAnchor.setAttribute("href", dataStr); downloadAnchor.setAttribute("download", "m5_can_config_v3_8.json"); document.body.appendChild(downloadAnchor); downloadAnchor.click(); downloadAnchor.remove(); log("Config Exported");
         }
-        function importConfig() { document.getElementById('import-file').click(); }
+        function importConfig() {
+            const target = document.getElementById("cfg-storage-target").value;
+            if (target === "m5") { loadConfigFromM5(); return; }
+            document.getElementById('import-file').click();
+        }
         function handleFileSelect(input) {
             const file = input.files[0];
             if (!file) { log("Import: no file"); return; }
@@ -1242,30 +1328,8 @@
             reader.onload = function (e) {
                 try {
                     const config = JSON.parse(e.target.result);
-                    if (config.btnLabels) { btnLabels = config.btnLabels; localStorage.setItem("btnLabels", JSON.stringify(btnLabels)); }
-                    if (config.btnModes) { btnModes = config.btnModes; localStorage.setItem("btnModes", JSON.stringify(btnModes)); }
-                    if (config.btnColors) { btnColors = config.btnColors; localStorage.setItem("btnColors", JSON.stringify(btnColors)); }
-                    if (config.btnOnVals) { btnOnVals = config.btnOnVals; localStorage.setItem("btnOnVals", JSON.stringify(btnOnVals)); }
-                    if (config.btnOffVals) { btnOffVals = config.btnOffVals; localStorage.setItem("btnOffVals", JSON.stringify(btnOffVals)); }
-                    if (config.btnEndian) { btnEndian = config.btnEndian; localStorage.setItem("btnEndian", JSON.stringify(btnEndian)); }
-                    if (config.btnIcons) { btnIcons = config.btnIcons; localStorage.setItem("btnIcons", JSON.stringify(btnIcons)); }
-                    if (config.btnAuth) { btnAuth = config.btnAuth; localStorage.setItem("btnAuth", JSON.stringify(btnAuth)); }
-                    if (config.cfgVibe !== undefined) { cfgVibe = config.cfgVibe; localStorage.setItem("cfgVibe", JSON.stringify(cfgVibe)); }
-                    if (config.cfgSound !== undefined) { cfgSound = config.cfgSound; localStorage.setItem("cfgSound", JSON.stringify(cfgSound)); }
-                    if (config.canId) { document.getElementById("can-id-input").value = config.canId; canIdVal = config.canId; localStorage.setItem("canIdVal", canIdVal); }
-                    if (config.kMeterId) { document.getElementById("k-meter-id-input").value = config.kMeterId; kMeterIdVal = config.kMeterId; localStorage.setItem("kMeterIdVal", kMeterIdVal); }
-                    if (config.gpsBaseId) { document.getElementById("gps-base-id-input").value = config.gpsBaseId; gpsBaseIdVal = config.gpsBaseId; localStorage.setItem("gpsBaseIdVal", gpsBaseIdVal); }
-                    if (config.tempWarnVal) { tempWarnVal = config.tempWarnVal; localStorage.setItem("tempWarnVal", tempWarnVal); document.getElementById("temp-alarm-input").value = tempWarnVal; }
-                    if (config.tempColor) { tempColor = config.tempColor; localStorage.setItem("tempColor", tempColor); document.getElementById("temp-color-input").value = tempColor; }
-                    if (config.btnOnDelays) { btnOnDelays = config.btnOnDelays; localStorage.setItem("btnOnDelays", JSON.stringify(btnOnDelays)); }
-                    if (config.btnOffDelays) { btnOffDelays = config.btnOffDelays; localStorage.setItem("btnOffDelays", JSON.stringify(btnOffDelays)); }
-                    
-                    if (config.rxConfigs) { rxConfigs = config.rxConfigs; localStorage.setItem("rxConfigs", JSON.stringify(rxConfigs)); }
-                    if (config.pinCode) { localStorage.setItem('pinCode', config.pinCode); log("PIN restored"); }
-                    if (config.grp1Id) { grp1IdVal = config.grp1Id; localStorage.setItem("grp1IdVal", grp1IdVal); const el=document.getElementById("grp1-id-input"); if(el){el.value=grp1IdVal; updateGrpDec('grp1');} }
-                    if (config.grp2Id) { grp2IdVal = config.grp2Id; localStorage.setItem("grp2IdVal", grp2IdVal); const el=document.getElementById("grp2-id-input"); if(el){el.value=grp2IdVal; updateGrpDec('grp2');} }
-
-                    log("Config Loaded"); alert("Configuration Loaded Successfully"); renderConfigList(); renderKeypadGrid(); loadRxSlotFromUI(); updateLabelsOnMeterView();
+                    applyConfigObject(config);
+                    log("Config Loaded"); alert("Configuration Loaded Successfully");
                 } catch (err) { log("Import Err: " + err); alert("Failed to load config"); }
             }; reader.readAsText(file); input.value = '';
         }
