@@ -307,6 +307,9 @@
                 </div>
             </div>
             <div class="control-row" style="margin-top:5px;">
+                <button class="action-btn btn-blue" onclick="calibrateYaw()" style="width:100%; font-size:0.85rem;">🧭 ヨー軸較正 (直線走行中に押す)</button>
+            </div>
+            <div class="control-row" style="margin-top:5px;">
                 <div style="display:flex; gap:5px;">
                     <div class="id-input-group" style="flex:0.4; padding:2px;">
                         <input type="color" id="temp-color-input" value="#00FFFF" style="width:100%; height:35px; border:none; padding:0; background:none; cursor:pointer;">
@@ -1045,11 +1048,15 @@
         }
 
         function handleNotifications(event) {
-            const decoder = new TextDecoder('utf-8'); const cmd = decoder.decode(event.target.value); const cleanedCmd = cmd.replace(/(\r\n|\n|\r)/gm, "").trim(); log("RX: " + cleanedCmd); resetWatchdog();
+            const decoder = new TextDecoder('utf-8'); const cmd = decoder.decode(event.target.value); const cleanedCmd = cmd.replace(/(\r\n|\n|\r)/gm, "").trim();
+            if (!cleanedCmd.startsWith("VALS=")) { log("RX: " + cleanedCmd); }
+            resetWatchdog();
             
             if (cleanedCmd.startsWith("ID=")) { const val = cleanedCmd.split("=")[1].replace("0x", "").replace("0X", "").toUpperCase(); log("Sync ID: " + val); canIdVal = val; localStorage.setItem("canIdVal", canIdVal); const el = document.getElementById("can-id-input"); if (el) el.value = canIdVal; }
             else if (cleanedCmd.startsWith("KID=")) { const val = cleanedCmd.split("=")[1].replace("0x", "").replace("0X", "").toUpperCase(); log("Sync KID: " + val); kMeterIdVal = val; localStorage.setItem("kMeterIdVal", kMeterIdVal); const el = document.getElementById("k-meter-id-input"); if (el) el.value = kMeterIdVal; }
             else if (cleanedCmd.startsWith("GID=")) { const val = cleanedCmd.split("=")[1].replace("0x", "").replace("0X", "").toUpperCase(); log("Sync GID: " + val); gpsBaseIdVal = val; localStorage.setItem("gpsBaseIdVal", gpsBaseIdVal); const el = document.getElementById("gps-base-id-input"); if (el) el.value = gpsBaseIdVal; }
+            else if (cleanedCmd.startsWith("YAWCAL_OK=")) { const v = cleanedCmd.split("=")[1]; log("ヨー軸較正完了: " + v + "度"); alert("較正完了\nオフセット: " + v + "度"); }
+            else if (cleanedCmd.startsWith("YAWCAL_ERR=")) { const reason = cleanedCmd.split("=")[1]; let msg = "較正に失敗しました"; if (reason === "too_slow") msg = "速度不足です。直線走行中(10km/h以上)に押してください"; else if (reason === "no_imu") msg = "このM5にはIMUが搭載されていません"; log("YAWCAL失敗: " + reason); alert(msg); }
             else if (cleanedCmd === "CBOK") { log("M5設定保存: OK確認"); if (_cfgSaveResolve) { _cfgSaveResolve(); _cfgSaveResolve = null; } }
             else if (cleanedCmd.startsWith("CBERR")) { log("M5設定保存: エラー " + cleanedCmd); if (_cfgSaveReject) { _cfgSaveReject(new Error(cleanedCmd)); _cfgSaveReject = null; } }
             else if (cleanedCmd.startsWith("CD=")) { _cfgLoadBuffer = ""; _cfgLoadExpected = parseInt(cleanedCmd.split("=")[1]); }
@@ -1207,6 +1214,12 @@
                 log(`Set GPS Base ID: 0x${val}`); localStorage.setItem("gpsBaseIdVal", val); gpsBaseIdVal = val; 
                 if (rxChar) { const cmd = `GID=${val}`; bleSend(cmd).catch(e => log("TX ERR GID")); } 
             } else { alert("Invalid Hex ID"); } 
+        }
+        function calibrateYaw() {
+            if (!rxChar) { alert("M5未接続です"); return; }
+            if (!confirm("直線走行中(時速10km/h以上)に押してください。よろしいですか？")) return;
+            log("ヨー軸較正要求送信");
+            bleSend("YAWCAL").catch(e => log("YAWCAL送信失敗: " + e));
         }
 
         // ★ グループID設定 (v4.0)
