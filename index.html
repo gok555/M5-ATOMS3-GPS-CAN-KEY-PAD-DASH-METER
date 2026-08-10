@@ -307,6 +307,12 @@
                 </div>
             </div>
             <div class="control-row" style="margin-top:5px;">
+                <div style="display:flex; align-items:center; gap:10px; background:#333; padding:8px; border-radius:8px;">
+                    <label style="flex:1; font-size:0.85rem;">📡 内蔵IMU (ATOM S3Rのみ)</label>
+                    <input type="checkbox" id="imu-toggle" onchange="toggleImu(this)" style="width:22px; height:22px;">
+                </div>
+            </div>
+            <div class="control-row" style="margin-top:5px;">
                 <button class="action-btn btn-blue" onclick="calibrateYaw()" style="width:100%; font-size:0.85rem;">🧭 ヨー軸較正 (直線走行中に押す)</button>
             </div>
             <div class="control-row" style="margin-top:5px;">
@@ -1055,6 +1061,7 @@
             if (cleanedCmd.startsWith("ID=")) { const val = cleanedCmd.split("=")[1].replace("0x", "").replace("0X", "").toUpperCase(); log("Sync ID: " + val); canIdVal = val; localStorage.setItem("canIdVal", canIdVal); const el = document.getElementById("can-id-input"); if (el) el.value = canIdVal; }
             else if (cleanedCmd.startsWith("KID=")) { const val = cleanedCmd.split("=")[1].replace("0x", "").replace("0X", "").toUpperCase(); log("Sync KID: " + val); kMeterIdVal = val; localStorage.setItem("kMeterIdVal", kMeterIdVal); const el = document.getElementById("k-meter-id-input"); if (el) el.value = kMeterIdVal; }
             else if (cleanedCmd.startsWith("GID=")) { const val = cleanedCmd.split("=")[1].replace("0x", "").replace("0X", "").toUpperCase(); log("Sync GID: " + val); gpsBaseIdVal = val; localStorage.setItem("gpsBaseIdVal", gpsBaseIdVal); const el = document.getElementById("gps-base-id-input"); if (el) el.value = gpsBaseIdVal; }
+            else if (cleanedCmd.startsWith("IMU=")) { const on = cleanedCmd.split("=")[1] === "1"; log("Sync IMU: " + (on ? "ON" : "OFF")); const el = document.getElementById("imu-toggle"); if (el) el.checked = on; }
             else if (cleanedCmd.startsWith("YAWCAL_OK=")) { const v = cleanedCmd.split("=")[1]; log("ヨー軸較正完了: " + v + "度"); alert("較正完了\nオフセット: " + v + "度"); }
             else if (cleanedCmd.startsWith("YAWCAL_ERR=")) { const reason = cleanedCmd.split("=")[1]; let msg = "較正に失敗しました"; if (reason === "too_slow") msg = "速度不足です。直線走行中(10km/h以上)に押してください"; else if (reason === "no_imu") msg = "このM5にはIMUが搭載されていません"; log("YAWCAL失敗: " + reason); alert(msg); }
             else if (cleanedCmd === "CBOK") { log("M5設定保存: OK確認"); if (_cfgSaveResolve) { _cfgSaveResolve(); _cfgSaveResolve = null; } }
@@ -1220,6 +1227,17 @@
             if (!confirm("直線走行中(時速10km/h以上)に押してください。よろしいですか？")) return;
             log("ヨー軸較正要求送信");
             bleSend("YAWCAL").catch(e => log("YAWCAL送信失敗: " + e));
+        }
+        function toggleImu(el) {
+            if (!rxChar) { alert("M5未接続です"); el.checked = !el.checked; return; }
+            if (el.checked) {
+                if (!confirm("ATOM S3R以外(IMU非搭載機)でONにすると動作が不安定になる場合があります。\n本当にONにしますか？")) {
+                    el.checked = false; return;
+                }
+            }
+            const val = el.checked ? "1" : "0";
+            log("IMU " + (el.checked ? "ON" : "OFF") + " 要求送信");
+            bleSend("IMU=" + val).catch(e => log("IMU送信失敗: " + e));
         }
 
         // ★ グループID設定 (v4.0)
