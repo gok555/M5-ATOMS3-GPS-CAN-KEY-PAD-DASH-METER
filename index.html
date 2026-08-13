@@ -326,6 +326,10 @@
                     </div>
                 </div>
                 <div style="font-size:0.7rem; color:#888; margin-top:2px; text-align:right;">Exhaust Temp Color & Alarm</div>
+                <div style="display:flex; align-items:center; gap:8px; margin-top:5px; background:#2a2a2a; padding:6px; border-radius:6px;">
+                    <input type="checkbox" id="temp-ailog-input" onchange="localStorage.setItem('tempAiLog', this.checked ? '1':'0')" style="width:20px; height:20px;">
+                    <label for="temp-ailog-input" style="font-size:0.8rem; color:#8ecae6;">🤖 排気温度をAIログ対象にする</label>
+                </div>
             </div>
             
             <!-- ★ PIN認証管理 (Ver 8.1) -->
@@ -469,6 +473,10 @@
                         <input type="text" inputmode="text" id="rx-alarm-input" placeholder="Off" style="flex:1; background:#222; border:1px solid #555; color:white; padding:8px 0; border-radius:4px; text-align:center; font-family:monospace; font-size:0.9rem;">
                     </div>
                 </div>
+                <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px; background:#2a2a2a; padding:6px; border-radius:6px;">
+                    <input type="checkbox" id="rx-ailog-input" style="width:20px; height:20px;">
+                    <label for="rx-ailog-input" style="font-size:0.8rem; color:#8ecae6;">🤖 AIログ対象にする</label>
+                </div>
                 
                 <div class="live-preview-box" style="padding: 5px; margin-top: 5px; margin-bottom: 5px;">
                     <div style="font-size:0.7rem; color:#aaa;">Preview</div>
@@ -495,6 +503,22 @@
                     <button class="action-btn btn-orange" onclick="importConfig()" style="font-size:0.9rem;">⬆ Load Config</button>
                 </div>
                 <input type="file" id="import-file" style="display:none" accept=".json" onchange="handleFileSelect(this)">
+            </div>
+            <div class="control-row" style="margin-top: 20px; border-top: 1px solid #444; padding-top: 10px;">
+                <div style="color: #ccc; font-size: 0.9rem; margin-bottom: 5px; text-align: center;">🤖 AIアシスト (任意)</div>
+                <div style="font-size:0.7rem; color:#888; margin-bottom:8px;">
+                    各項目の「AIログ対象」チェックをONにすると、直近15分の傾向と警告履歴をAIに送って走行アドバイスをもらえます。APIキーはこの端末のみに保存され、外部サーバーには送信されません。
+                </div>
+                <div class="id-input-group" style="margin-bottom:5px;">
+                    <label style="min-width:70px; font-size:0.75rem;">Gemini Key</label>
+                    <input type="password" id="gemini-api-key-input" placeholder="APIキーを入力" style="flex:1;">
+                </div>
+                <div class="id-input-group" style="margin-bottom:8px;">
+                    <label style="min-width:70px; font-size:0.75rem;">Model</label>
+                    <input type="text" id="gemini-model-input" value="gemini-2.0-flash" style="flex:1;">
+                </div>
+                <button class="action-btn btn-blue" onclick="askAiAdvice()" style="width:100%;">🤖 AIに聞く (直近ログを送信)</button>
+                <div id="ai-response-box" style="display:none; margin-top:10px; background:#1a1a1a; border:1px solid #4a90d9; border-radius:8px; padding:10px; font-size:0.85rem; line-height:1.5; white-space:pre-wrap;"></div>
             </div>
             <div style="color: #666; font-size: 0.8rem; text-align: center; margin-top: 10px;">Atom S3 Keypad & Dash Meter Ver 4.0 (Group ID)<br>M5Atom S3 CAN</div>
         </div>
@@ -577,6 +601,29 @@
         }
         
         let lastRxWarnTimes = Array(7).fill(0);
+
+        // ★ AIアシスト用ロギング (M5側は無関係、スマホ受信データから直接収集)
+        let aiTrendLog = [];
+        const AI_TREND_MAX = 180;      // 5秒×180件=15分
+        const AI_TREND_INTERVAL = 5000;
+        let aiEventLog = [];
+        const AI_EVENT_MAX = 20;
+        let aiCurrentValues = {};
+        let aiAlarmState = {};
+        function aiLogUpdate(key, value, isAlarm, thresholdDesc) {
+            aiCurrentValues[key] = value;
+            const wasAlarm = aiAlarmState[key] || false;
+            if (isAlarm && !wasAlarm) {
+                aiEventLog.push({ t: Date.now(), key, value, desc: thresholdDesc });
+                if (aiEventLog.length > AI_EVENT_MAX) aiEventLog.shift();
+            }
+            aiAlarmState[key] = isAlarm;
+        }
+        setInterval(() => {
+            if (!isConnected || Object.keys(aiCurrentValues).length === 0) return;
+            aiTrendLog.push({ t: Date.now(), values: { ...aiCurrentValues } });
+            if (aiTrendLog.length > AI_TREND_MAX) aiTrendLog.shift();
+        }, AI_TREND_INTERVAL);
         let currentRxSlot = 0; // Currently editing slot in Settings (0-6)
 
         let audioCtx = null;
@@ -606,6 +653,18 @@
                 });
             }
             const tColInput = document.getElementById("temp-color-input");
+            const tAiLogInput = document.getElementById("temp-ailog-input");
+            if (tAiLogInput) tAiLogInput.checked = (localStorage.getItem("tempAiLog") === "1");
+            const geminiKeyInput = document.getElementById("gemini-api-key-input");
+            if (geminiKeyInput) {
+                geminiKeyInput.value = localStorage.getItem("geminiApiKey") || "";
+                geminiKeyInput.addEventListener('change', (e) => localStorage.setItem("geminiApiKey", e.target.value));
+            }
+            const geminiModelInput = document.getElementById("gemini-model-input");
+            if (geminiModelInput) {
+                geminiModelInput.value = localStorage.getItem("geminiModel") || "gemini-2.0-flash";
+                geminiModelInput.addEventListener('change', (e) => localStorage.setItem("geminiModel", e.target.value));
+            }
             if (tColInput) {
                 tColInput.value = tempColor;
                 tColInput.addEventListener('change', (e) => {
@@ -634,6 +693,7 @@
             document.getElementById("rx-color-input").value = cfg.color;
             document.getElementById("rx-alarm-mode-select").value = cfg.alarmMode;
             document.getElementById("rx-alarm-input").value = (cfg.warnVal === null) ? "" : cfg.warnVal;
+            document.getElementById("rx-ailog-input").checked = !!cfg.aiLog;
             
             document.getElementById("rx-config-status").textContent = "";
         }
@@ -660,6 +720,7 @@
             cfg.alarmMode = document.getElementById("rx-alarm-mode-select").value;
             const wVal = parseFloat(document.getElementById("rx-alarm-input").value);
             cfg.warnVal = isNaN(wVal) ? null : wVal;
+            cfg.aiLog = document.getElementById("rx-ailog-input").checked;
 
             localStorage.setItem("rxConfigs", JSON.stringify(rxConfigs));
             updateLabelsOnMeterView();
@@ -1033,6 +1094,9 @@
                     if (cfg.alarmMode === 'low') { if (calcVal <= cfg.warnVal) isAlarm = true; }
                     else { if (calcVal >= cfg.warnVal) isAlarm = true; }
                 }
+                if (cfg.aiLog) {
+                    aiLogUpdate(cfg.label, calcVal, isAlarm, (cfg.alarmMode === 'low' ? '≦' : '≧') + ' ' + cfg.warnVal + cfg.unit);
+                }
                 
                 if (isAlarm) {
                     el.style.color = "#FF0000";
@@ -1144,6 +1208,9 @@
                 if (el) {
                     el.textContent = val; let tempVal = parseInt(val);
                     let isAlarm = (!isNaN(tempVal) && tempVal >= tempWarnVal);
+                    if (localStorage.getItem('tempAiLog') === '1' && !isNaN(tempVal)) {
+                        aiLogUpdate('排気温度', tempVal, isAlarm, '≧ ' + tempWarnVal + '℃');
+                    }
                     if (isAlarm) { 
                         el.classList.add("temp-warning"); el.classList.remove("val-cyan"); el.classList.add("val-red");
                         el.style.color = "#FF0000";
@@ -1240,6 +1307,66 @@
             bleSend("IMU=" + val).catch(e => log("IMU送信失敗: " + e));
         }
 
+        // ★ AIアシスト
+        function buildAiPrompt() {
+            const keys = Object.keys(aiCurrentValues);
+            if (keys.length === 0) return null;
+            let lines = [];
+            lines.push("あなたは自動車のエンジン監視アシスタントです。以下の走行データを見て、運転者への短いアドバイスを日本語で3〜4文程度で述べてください。専門用語は最小限にし、具体的な操作(アクセルを緩める等)を含めてください。");
+            lines.push("");
+            lines.push("【直近15分の傾向(5秒間隔サンプル、項目ごとに開始値→最新値、最小〜最大)】");
+            keys.forEach(k => {
+                const series = aiTrendLog.map(e => e.values[k]).filter(v => v !== undefined);
+                if (series.length === 0) return;
+                const first = series[0], last = series[series.length - 1];
+                const min = Math.min(...series), max = Math.max(...series);
+                lines.push(`- ${k}: ${first} → ${last} (範囲 ${min}〜${max}, サンプル数${series.length})`);
+            });
+            lines.push("");
+            if (aiEventLog.length > 0) {
+                lines.push("【警告発生履歴(直近" + aiEventLog.length + "件)】");
+                aiEventLog.forEach(e => {
+                    const sec = Math.round((Date.now() - e.t) / 1000);
+                    lines.push(`- ${sec}秒前: ${e.key} が ${e.value} で閾値(${e.desc})を超過`);
+                });
+            } else {
+                lines.push("【警告発生履歴】なし(閾値超過は起きていません)");
+            }
+            return lines.join("\n");
+        }
+        async function askAiAdvice() {
+            const apiKey = document.getElementById("gemini-api-key-input").value.trim();
+            const model = document.getElementById("gemini-model-input").value.trim() || "gemini-2.0-flash";
+            if (!apiKey) { alert("Gemini APIキーを入力してください"); return; }
+            const prompt = buildAiPrompt();
+            if (!prompt) { alert("AIログ対象の項目がまだデータを受信していません。「AIログ対象」チェックをONにした項目のデータ受信を少し待ってから試してください。"); return; }
+            const box = document.getElementById("ai-response-box");
+            box.style.display = "block";
+            box.textContent = "⏳ AIに問い合わせ中...";
+            log("AIアシスト要求送信");
+            try {
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+                const res = await fetch(url, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    const msg = (data.error && data.error.message) ? data.error.message : ("HTTP " + res.status);
+                    box.textContent = "❌ エラー: " + msg;
+                    log("AIアシストエラー: " + msg);
+                    return;
+                }
+                const text = data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts[0] && data.candidates[0].content.parts[0].text;
+                box.textContent = text || "(応答が空でした)";
+                log("AIアシスト応答受信");
+            } catch (e) {
+                box.textContent = "❌ 通信エラー: " + e.message;
+                log("AIアシスト通信失敗: " + e.message);
+            }
+        }
+
         // ★ グループID設定 (v4.0)
         function updateGrpDec(grp) {
             const el = document.getElementById(`${grp}-id-input`);
@@ -1282,7 +1409,8 @@
         }
         function buildConfigObject() {
             const _pin = localStorage.getItem('pinCode') || '';
-            return { version: "4.0.0", timestamp: new Date().toISOString(), btnLabels, btnModes, btnColors, btnOnVals, btnOffVals, btnEndian, btnIcons, btnAuth, btnOnDelays, btnOffDelays, cfgVibe, cfgSound, canId: canIdVal, kMeterId: kMeterIdVal, gpsBaseId: gpsBaseIdVal, tempWarnVal, tempColor, rxConfigs, grp1Id: grp1IdVal, grp2Id: grp2IdVal,
+            const _tempAiLog = localStorage.getItem('tempAiLog') === '1';
+            return { version: "4.0.0", timestamp: new Date().toISOString(), btnLabels, btnModes, btnColors, btnOnVals, btnOffVals, btnEndian, btnIcons, btnAuth, btnOnDelays, btnOffDelays, cfgVibe, cfgSound, canId: canIdVal, kMeterId: kMeterIdVal, gpsBaseId: gpsBaseIdVal, tempWarnVal, tempColor, tempAiLog: _tempAiLog, rxConfigs, grp1Id: grp1IdVal, grp2Id: grp2IdVal,
                 pinCode: _pin };
         }
         function applyConfigObject(config) {
@@ -1301,6 +1429,7 @@
             if (config.gpsBaseId) { document.getElementById("gps-base-id-input").value = config.gpsBaseId; gpsBaseIdVal = config.gpsBaseId; localStorage.setItem("gpsBaseIdVal", gpsBaseIdVal); }
             if (config.tempWarnVal) { tempWarnVal = config.tempWarnVal; localStorage.setItem("tempWarnVal", tempWarnVal); document.getElementById("temp-alarm-input").value = tempWarnVal; }
             if (config.tempColor) { tempColor = config.tempColor; localStorage.setItem("tempColor", tempColor); document.getElementById("temp-color-input").value = tempColor; }
+            if (config.tempAiLog !== undefined) { localStorage.setItem("tempAiLog", config.tempAiLog ? "1" : "0"); const el = document.getElementById("temp-ailog-input"); if (el) el.checked = !!config.tempAiLog; }
             if (config.btnOnDelays) { btnOnDelays = config.btnOnDelays; localStorage.setItem("btnOnDelays", JSON.stringify(btnOnDelays)); }
             if (config.btnOffDelays) { btnOffDelays = config.btnOffDelays; localStorage.setItem("btnOffDelays", JSON.stringify(btnOffDelays)); }
             if (config.rxConfigs) { rxConfigs = config.rxConfigs; localStorage.setItem("rxConfigs", JSON.stringify(rxConfigs)); }
