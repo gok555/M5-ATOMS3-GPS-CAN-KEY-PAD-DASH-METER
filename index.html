@@ -517,7 +517,11 @@
                     <label style="min-width:70px; font-size:0.75rem;">Model</label>
                     <input type="text" id="gemini-model-input" value="gemini-2.0-flash" style="flex:1;">
                 </div>
-                <button class="action-btn btn-blue" onclick="askAiAdvice()" style="width:100%;">🤖 AIに聞く (直近ログを送信)</button>
+                <button class="action-btn btn-blue" id="ai-ask-btn"
+                    onclick="aiBtnClick()"
+                    onmousedown="aiBtnPressStart()" onmouseup="aiBtnPressEnd()" onmouseleave="aiBtnPressEnd()"
+                    ontouchstart="aiBtnPressStart()" ontouchend="aiBtnPressEnd()"
+                    style="width:100%;">🤖 AIに聞く (直近ログを送信) / 長押しで疎通テスト</button>
                 <div id="ai-response-box" style="display:none; margin-top:10px; background:#1a1a1a; border:1px solid #4a90d9; border-radius:8px; padding:10px; font-size:0.85rem; line-height:1.5; white-space:pre-wrap;"></div>
             </div>
             <div style="color: #666; font-size: 0.8rem; text-align: center; margin-top: 10px;">Atom S3 Keypad & Dash Meter Ver 4.0 (Group ID)<br>M5Atom S3 CAN</div>
@@ -1334,16 +1338,13 @@
             }
             return lines.join("\n");
         }
-        async function askAiAdvice() {
+        async function sendToGemini(prompt, boxMessage) {
             const apiKey = document.getElementById("gemini-api-key-input").value.trim();
             const model = document.getElementById("gemini-model-input").value.trim() || "gemini-2.0-flash";
             if (!apiKey) { alert("Gemini APIキーを入力してください"); return; }
-            const prompt = buildAiPrompt();
-            if (!prompt) { alert("AIログ対象の項目がまだデータを受信していません。「AIログ対象」チェックをONにした項目のデータ受信を少し待ってから試してください。"); return; }
             const box = document.getElementById("ai-response-box");
             box.style.display = "block";
-            box.textContent = "⏳ AIに問い合わせ中...";
-            log("AIアシスト要求送信");
+            box.textContent = boxMessage;
             try {
                 const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
                 const res = await fetch(url, {
@@ -1355,16 +1356,44 @@
                 if (!res.ok) {
                     const msg = (data.error && data.error.message) ? data.error.message : ("HTTP " + res.status);
                     box.textContent = "❌ エラー: " + msg;
-                    log("AIアシストエラー: " + msg);
+                    log("AI通信エラー: " + msg);
                     return;
                 }
                 const text = data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts[0] && data.candidates[0].content.parts[0].text;
                 box.textContent = text || "(応答が空でした)";
-                log("AIアシスト応答受信");
+                log("AI応答受信");
             } catch (e) {
                 box.textContent = "❌ 通信エラー: " + e.message;
-                log("AIアシスト通信失敗: " + e.message);
+                log("AI通信失敗: " + e.message);
             }
+        }
+        async function askAiAdvice() {
+            const prompt = buildAiPrompt();
+            if (!prompt) { alert("AIログ対象の項目がまだデータを受信していません。「AIログ対象」チェックをONにした項目のデータ受信を少し待ってから試してください。"); return; }
+            log("AIアシスト要求送信");
+            await sendToGemini(prompt, "⏳ AIに問い合わせ中...");
+        }
+        async function testAiConnection() {
+            log("AI疎通テスト送信");
+            await sendToGemini("「接続テストOK」とだけ日本語で短く返答してください。", "⏳ 疎通テスト中...");
+        }
+        // ★ 長押し検出(AIに聞くボタン): 長押しで疎通テスト、通常タップで本来の動作
+        let _aiBtnPressTimer = null;
+        let _aiBtnLongPressed = false;
+        function aiBtnPressStart() {
+            _aiBtnLongPressed = false;
+            _aiBtnPressTimer = setTimeout(() => {
+                _aiBtnLongPressed = true;
+                if (navigator.vibrate) navigator.vibrate(50);
+                testAiConnection();
+            }, 800);
+        }
+        function aiBtnPressEnd() {
+            clearTimeout(_aiBtnPressTimer);
+        }
+        function aiBtnClick() {
+            if (_aiBtnLongPressed) { _aiBtnLongPressed = false; return; } // 長押し発火時はタップ動作をキャンセル
+            askAiAdvice();
         }
 
         // ★ グループID設定 (v4.0)
