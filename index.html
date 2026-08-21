@@ -1504,6 +1504,7 @@
             for (let i = 0; i < binaryStr.length; i++) sum += binaryStr.charCodeAt(i);
             return sum % 100000;
         }
+        function _bleDelay(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
         function saveConfigToM5Once(binaryStr, b64, checksum, timeoutMs) {
             const p = new Promise((resolve, reject) => {
                 _cfgSaveResolve = resolve; _cfgSaveReject = reject;
@@ -1512,9 +1513,9 @@
             let chain = bleSend(`CBSTART=${binaryStr.length},${checksum}`);
             for (let i = 0; i < b64.length; i += CFG_CHUNK_SIZE) {
                 const chunk = b64.substring(i, i + CFG_CHUNK_SIZE);
-                chain = chain.then(() => bleSend(`CB=${chunk}`));
+                chain = chain.then(() => _bleDelay(15)).then(() => bleSend(`CB=${chunk}`));
             }
-            chain.then(() => bleSend("CBEND")).catch(e => { if (_cfgSaveReject) _cfgSaveReject(e); });
+            chain.then(() => _bleDelay(15)).then(() => bleSend("CBEND")).catch(e => { if (_cfgSaveReject) _cfgSaveReject(e); });
             return p;
         }
         async function saveConfigToM5() {
