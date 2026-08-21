@@ -1127,7 +1127,7 @@
 
         function handleNotifications(event) {
             const decoder = new TextDecoder('utf-8'); const cmd = decoder.decode(event.target.value); const cleanedCmd = cmd.replace(/(\r\n|\n|\r)/gm, "").trim();
-            if (!cleanedCmd.startsWith("VALS=")) { log("RX: " + cleanedCmd); }
+            if (!cleanedCmd.startsWith("VALS=") && cleanedCmd !== "CA") { log("RX: " + cleanedCmd); }
             resetWatchdog();
             
             if (cleanedCmd.startsWith("ID=")) { const val = cleanedCmd.split("=")[1].replace("0x", "").replace("0X", "").toUpperCase(); log("Sync ID: " + val); canIdVal = val; localStorage.setItem("canIdVal", canIdVal); const el = document.getElementById("can-id-input"); if (el) el.value = canIdVal; }
@@ -1138,6 +1138,8 @@
             else if (cleanedCmd.startsWith("YAWCAL_ERR=")) { const reason = cleanedCmd.split("=")[1]; let msg = "較正に失敗しました"; if (reason === "too_slow") msg = "速度不足です。直線走行中(10km/h以上)に押してください"; else if (reason === "no_imu") msg = "このM5にはIMUが搭載されていません"; log("YAWCAL失敗: " + reason); alert(msg); }
             else if (cleanedCmd === "CBOK") { log("M5設定保存: OK確認"); if (_cfgSaveResolve) { _cfgSaveResolve(); _cfgSaveResolve = null; } }
             else if (cleanedCmd.startsWith("CBERR")) { log("M5設定保存: エラー " + cleanedCmd); if (_cfgSaveReject) { _cfgSaveReject(new Error(cleanedCmd)); _cfgSaveReject = null; } }
+            else if (cleanedCmd === "CA") { if (_cfgChunkAckResolve) { _cfgChunkAckResolve(); _cfgChunkAckResolve = null; } }
+            else if (cleanedCmd === "CAERR") { if (_cfgChunkAckReject) { _cfgChunkAckReject(new Error("chunk_decode_error")); _cfgChunkAckReject = null; } }
             else if (cleanedCmd.startsWith("CD=")) {
                 _cfgLoadBuffer = "";
                 const parts = cleanedCmd.substring(3).split(",");
@@ -1504,18 +1506,34 @@
             for (let i = 0; i < binaryStr.length; i++) sum += binaryStr.charCodeAt(i);
             return sum % 100000;
         }
-        function _bleDelay(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
-        function saveConfigToM5Once(binaryStr, b64, checksum, timeoutMs) {
+        let _cfgChunkAckResolve = null;
+        let _cfgChunkAckReject = null;
+        function sendChunkWithAck(cmd, timeoutMs) {
+            const p = new Promise((resolve, reject) => {
+                _cfgChunkAckResolve = resolve;
+                _cfgChunkAckReject = reject;
+                setTimeout(() => reject(new Error("chunk_ack_timeout")), timeoutMs);
+            });
+            bleSend(cmd).catch(e => { if (_cfgChunkAckReject) _cfgChunkAckReject(e); });
+            return p;
+        }
+        async function saveConfigToM5Once(binaryStr, b64, checksum, timeoutMs) {
             const p = new Promise((resolve, reject) => {
                 _cfgSaveResolve = resolve; _cfgSaveReject = reject;
                 setTimeout(() => reject(new Error("M5からの応答タイムアウト")), timeoutMs);
             });
-            let chain = bleSend(`CBSTART=${binaryStr.length},${checksum}`);
-            for (let i = 0; i < b64.length; i += CFG_CHUNK_SIZE) {
-                const chunk = b64.substring(i, i + CFG_CHUNK_SIZE);
-                chain = chain.then(() => _bleDelay(15)).then(() => bleSend(`CB=${chunk}`));
-            }
-            chain.then(() => _bleDelay(15)).then(() => bleSend("CBEND")).catch(e => { if (_cfgSaveReject) _cfgSaveReject(e); });
+            (async () => {
+                try {
+                    await bleSend(`CBSTART=${binaryStr.length},${checksum}`);
+                    for (let i = 0; i < b64.length; i += CFG_CHUNK_SIZE) {
+                        const chunk = b64.substring(i, i + CFG_CHUNK_SIZE);
+                        await sendChunkWithAck(`CB=${chunk}`, 3000);
+                    }
+                    await bleSend("CBEND");
+                } catch (e) {
+                    if (_cfgSaveReject) _cfgSaveReject(e);
+                }
+            })();
             return p;
         }
         async function saveConfigToM5() {
