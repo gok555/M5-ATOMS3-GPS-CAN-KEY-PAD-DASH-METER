@@ -1138,13 +1138,23 @@
             else if (cleanedCmd.startsWith("YAWCAL_ERR=")) { const reason = cleanedCmd.split("=")[1]; let msg = "較正に失敗しました"; if (reason === "too_slow") msg = "速度不足です。直線走行中(10km/h以上)に押してください"; else if (reason === "no_imu") msg = "このM5にはIMUが搭載されていません"; log("YAWCAL失敗: " + reason); alert(msg); }
             else if (cleanedCmd === "CBOK") { log("M5設定保存: OK確認"); if (_cfgSaveResolve) { _cfgSaveResolve(); _cfgSaveResolve = null; } }
             else if (cleanedCmd.startsWith("CBERR")) { log("M5設定保存: エラー " + cleanedCmd); if (_cfgSaveReject) { _cfgSaveReject(new Error(cleanedCmd)); _cfgSaveReject = null; } }
-            else if (cleanedCmd.startsWith("CD=")) { _cfgLoadBuffer = ""; _cfgLoadExpected = parseInt(cleanedCmd.split("=")[1]); }
+            else if (cleanedCmd.startsWith("CD=")) {
+                _cfgLoadBuffer = "";
+                const parts = cleanedCmd.substring(3).split(",");
+                _cfgLoadExpected = parseInt(parts[0]);
+                _cfgLoadChecksum = parts.length > 1 ? parseInt(parts[1]) : null;
+            }
             else if (cleanedCmd.startsWith("CK=")) { _cfgLoadBuffer += cleanedCmd.substring(3); }
             else if (cleanedCmd === "CE") {
                 if (_cfgLoadResolve) {
-                    if (_cfgLoadExpected > 0 && _cfgLoadBuffer.length !== _cfgLoadExpected) {
-                        log(`M5読込: 長さ不一致 (期待${_cfgLoadExpected} 実際${_cfgLoadBuffer.length})`);
-                        if (_cfgLoadReject) { _cfgLoadReject(new Error("length_mismatch")); _cfgLoadReject = null; }
+                    let actualChecksum = 0;
+                    for (let i = 0; i < _cfgLoadBuffer.length; i++) actualChecksum += _cfgLoadBuffer.charCodeAt(i);
+                    actualChecksum %= 100000;
+                    const lenOk = !(_cfgLoadExpected > 0 && _cfgLoadBuffer.length !== _cfgLoadExpected);
+                    const sumOk = (_cfgLoadChecksum === null || _cfgLoadChecksum === actualChecksum);
+                    if (!lenOk || !sumOk) {
+                        log(`M5読込: データ不整合 (長さ期待${_cfgLoadExpected}実際${_cfgLoadBuffer.length} / チェックサム期待${_cfgLoadChecksum}実際${actualChecksum})`);
+                        if (_cfgLoadReject) { _cfgLoadReject(new Error("data_corrupted")); _cfgLoadReject = null; }
                     } else {
                         _cfgLoadResolve(_cfgLoadBuffer);
                     }
@@ -1489,33 +1499,55 @@
                 if (loadBtn && loadBtn.dataset.orig) { loadBtn.textContent = loadBtn.dataset.orig; }
             }
         }
-        function saveConfigToM5() {
-            if (!rxChar) { alert("M5未接続です"); return; }
-            const json = JSON.stringify(buildConfigObject());
-            const b64 = btoa(unescape(encodeURIComponent(json)));
-            log("M5へ設定保存開始 (" + b64.length + " chars)");
-            setCfgBtnBusy(true, 'save');
-            const timeoutMs = 15000;
+        function computeByteChecksum(binaryStr) {
+            let sum = 0;
+            for (let i = 0; i < binaryStr.length; i++) sum += binaryStr.charCodeAt(i);
+            return sum % 100000;
+        }
+        function saveConfigToM5Once(binaryStr, b64, checksum, timeoutMs) {
             const p = new Promise((resolve, reject) => {
                 _cfgSaveResolve = resolve; _cfgSaveReject = reject;
                 setTimeout(() => reject(new Error("M5からの応答タイムアウト")), timeoutMs);
             });
-            let chain = bleSend(`CBSTART=${b64.length}`);
+            let chain = bleSend(`CBSTART=${binaryStr.length},${checksum}`);
             for (let i = 0; i < b64.length; i += CFG_CHUNK_SIZE) {
                 const chunk = b64.substring(i, i + CFG_CHUNK_SIZE);
                 chain = chain.then(() => bleSend(`CB=${chunk}`));
             }
             chain.then(() => bleSend("CBEND")).catch(e => { if (_cfgSaveReject) _cfgSaveReject(e); });
-            p.then(() => { log("M5へ設定保存完了(確認OK)"); alert("M5本体へ保存しました"); })
-             .catch(e => { log("M5保存失敗: " + e); alert("M5への保存に失敗しました: " + e.message); })
-             .finally(() => setCfgBtnBusy(false));
+            return p;
+        }
+        async function saveConfigToM5() {
+            if (!rxChar) { alert("M5未接続です"); return; }
+            const json = JSON.stringify(buildConfigObject());
+            const binaryStr = unescape(encodeURIComponent(json));
+            const b64 = btoa(binaryStr);
+            const checksum = computeByteChecksum(binaryStr);
+            log(`M5へ設定保存開始 (${binaryStr.length}byte, cksum=${checksum})`);
+            setCfgBtnBusy(true, 'save');
+            const maxAttempts = 3;
+            let lastErr = null;
+            let ok = false;
+            for (let i = 1; i <= maxAttempts && !ok; i++) {
+                try {
+                    await saveConfigToM5Once(binaryStr, b64, checksum, 15000);
+                    ok = true;
+                } catch (e) {
+                    lastErr = e;
+                    log(`M5保存${i}回目失敗(${e.message})` + (i < maxAttempts ? "、再試行します" : ""));
+                }
+            }
+            if (ok) { log("M5へ設定保存完了(確認OK)"); alert("M5本体へ保存しました"); }
+            else { log("M5保存失敗: " + lastErr); alert("M5への保存に失敗しました: " + lastErr.message); }
+            setCfgBtnBusy(false);
         }
         let _cfgLoadBuffer = "";
         let _cfgLoadExpected = 0;
+        let _cfgLoadChecksum = null;
         let _cfgLoadResolve = null;
         let _cfgLoadReject = null;
         function requestCloadOnce(timeoutMs) {
-            _cfgLoadBuffer = ""; _cfgLoadExpected = 0;
+            _cfgLoadBuffer = ""; _cfgLoadExpected = 0; _cfgLoadChecksum = null;
             const p = new Promise((resolve, reject) => {
                 _cfgLoadResolve = resolve;
                 _cfgLoadReject = reject;
@@ -1524,15 +1556,23 @@
             bleSend("CLOAD").catch(e => log("CLOAD送信失敗: " + e));
             return p;
         }
+        async function requestCloadWithRetry(timeoutMs, maxAttempts) {
+            let lastErr = null;
+            for (let i = 1; i <= maxAttempts; i++) {
+                try {
+                    return await requestCloadOnce(timeoutMs);
+                } catch (e) {
+                    lastErr = e;
+                    log(`M5読込${i}回目失敗(${e.message})` + (i < maxAttempts ? "、再試行します" : ""));
+                }
+            }
+            throw lastErr;
+        }
         function loadConfigFromM5() {
             if (!rxChar) { alert("M5未接続です"); return; }
             log("M5から設定読込開始");
             setCfgBtnBusy(true, 'load');
-            requestCloadOnce(15000)
-                .catch(e => {
-                    log("M5読込1回目失敗(" + e.message + ")、再試行します");
-                    return requestCloadOnce(15000);
-                })
+            requestCloadWithRetry(15000, 3)
                 .then(b64 => {
                     try {
                         const json = decodeURIComponent(escape(atob(b64)));
